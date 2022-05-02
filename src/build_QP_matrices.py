@@ -43,39 +43,44 @@ class QPinfo:
                 P[k*nnm+self.m:k*nnm, (k-1)*nnm+self.m:k*nnm] = Q2
         return P
 
-    def build_admittance(self, branches, gens, ibrs):
-        bgg = np.zeros((self.n, self.n), dtype=float)
-        bgi = np.zeros((self.n, self.m), dtype=float)
-        for ele in branches:
-            if ele.from_bus_gen and ele.to_bus_gen:
-                bgg[ele.from_bus_index, ele.from_bus_index] += ele.b
-                bgg[ele.from_bus_index, ele.to_bus_index] += -ele.b
-                bgg[ele.to_bus_index, ele.from_bus_index] += -ele.b
-                bgg[ele.to_bus_index, ele.to_bus_index] += -ele.b
-            elif ele.from_bus_gen and ele.to_bus_ibr:
-                bgg[ele.from_bus_index, ele.from_bus_index] += ele.b
-                bgi[ele.from_bus_index, ele.to_bus_index] += -ele.b
-            elif ele.to_bus_gen and ele.from_bus_ibr:
-                bgg[ele.to_bus_index, ele.to_bus_index] += ele.b
-                bgi[ele.to_bus_index, ele.from_bus_index] += -ele.b
-        self.bgg = bgg
-        self.bgi = bgi
-        return bgg, bgi
+    # def build_admittance(self, branches, gens, ibrs):
+    #     bgg = np.zeros((self.n, self.n), dtype=float)
+    #     bgi = np.zeros((self.n, self.m), dtype=float)
+    #     for ele in branches:
+    #         if ele.from_bus_gen and ele.to_bus_gen:
+    #             bgg[ele.from_bus_index, ele.from_bus_index] += ele.b
+    #             bgg[ele.from_bus_index, ele.to_bus_index] += -ele.b
+    #             bgg[ele.to_bus_index, ele.from_bus_index] += -ele.b
+    #             bgg[ele.to_bus_index, ele.to_bus_index] += -ele.b
+    #         elif ele.from_bus_gen and ele.to_bus_ibr:
+    #             bgg[ele.from_bus_index, ele.from_bus_index] += ele.b
+    #             bgi[ele.from_bus_index, ele.to_bus_index] += -ele.b
+    #         elif ele.to_bus_gen and ele.from_bus_ibr:
+    #             bgg[ele.to_bus_index, ele.to_bus_index] += ele.b
+    #             bgi[ele.to_bus_index, ele.from_bus_index] += -ele.b
+    #     self.bgg = bgg
+    #     self.bgi = bgi
+    #     return bgg, bgi
     
-    def build_A(self, gens):
+    def build_A(self, sim_data):
+        gens = sim_data['gens']
         m_vals = np.array([ele.inertia for ele in gens])
         d_vals = np.array([ele.damping for ele in gens])
-        top_left = np.diag(-d_vals/m_vals)
-        top_right = (np.diag(-1/m_vals) @ self.bgg)
-        self.A = np.block([[top_left, top_right], [np.identity(self.n, dtype=float), np.zeros((self.n,self.n), dtype=float)]])
+        P_vals = np.array([ele.P for ele in gens])
+        droop_vals = np.array([ele.droop for ele in gens])
+        Add = np.identity(self.n)
+        Adw = self.h*np.identity(self.n)
+        Awd = np.diag(-self.h/m_vals) @ sim_data['Bgg']
+        Aww = np.diag(1 + self.h/m_vals*(P_vals/droop_vals - 1/d_vals))
+        self.A = np.block([[Aww, Awd], [Adw, Add]])
 
-    def build_B(self, gens, ibrs):
-        n = len(gens)
+    def build_B(self, sim_data):
+        gens = sim_data['gens']
         m_vals = np.array([ele.inertia for ele in gens])
-        top = np.diag(-1/m_vals) @ self.bgi
-        Bu = np.block([[top], [np.zeros(n,n)]])
+        top = np.diag(-self.h/m_vals) @ sim_data['Bgi']
+        Bu = np.block([[top], [np.zeros(self.n,self.n)]])
         # disturbance term, ignored for now
-        Bd = np.block([[np.diag(-1/m_vals)], [np.zeros(n,n)]])
+        Bd = np.block([[np.diag(-self.h/m_vals)], [np.zeros(self.n,self.n)]])
         self.Bu = Bu
         self.Bd = Bd
 
@@ -90,12 +95,12 @@ class QPinfo:
         lb = np.copy(ub)
         return (ub, lb)
 
-    def build_C(self, gens, ibrs, branches):
+    def build_C(self, sim_data):
         nn = 2*self.n
         mnn = nn+self.m
-        self.build_admittance(branches, gens, ibrs)
-        self.build_A(gens)
-        self.build_B(gens, ibrs)
+        # self.build_admittance(branches, gens, ibrs)
+        self.build_A(sim_data)
+        self.build_B(sim_data)
         Asp = sparse.csc_matrix(self.A)
         Bsp = sparse.csc_matrix(self.Bu)
         C = sparse.csc_matrix((self.N*nn, self.N*(nn+self.m)))
@@ -107,11 +112,11 @@ class QPinfo:
             C[k*nn:(k+1)*nn, k*mnn+self.m:(k+1)*mnn] = -sparse.diags(nn)        
         return C
 
-def build_qp(gens, ibrs, branches, x0, N, n, m, omega_weight, rocof_weight, h):
+def build_qp(sim_data, x0, N, n, m, omega_weight, rocof_weight, h):
     qp_info = QPinfo(n, m, N, h, omega_weight, rocof_weight)
     P = qp_info.build_P()
     q = qp_info.build_q(x0)
-    (C, A) = qp_info.build_C(gens, ibrs, branches)
+    (C, A) = qp_info.build_C(sim_data)
     (ub, lb) = qp_info.build_bounds(x0)
     qp = osqp.OSQP()
     qp.setup(P=P, q=q, A=C, l=lb, u=ub)
