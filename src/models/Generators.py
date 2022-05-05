@@ -59,10 +59,12 @@ class Generators:
 
         self.id = self._ids.__next__()
 
+        self.Pss = None
         # variables if its a synch gen
         self.inertia = None
         self.damping = None
         self.droop = None
+        
 
         self.domega_index = None
         self.ddelta_index = None
@@ -74,8 +76,7 @@ class Generators:
         # variables if it is an IBR
         self.IBR = None
         self.input_index = None
-        self.Pmax = None
-        self.Pmin = None
+        self.delP_hist = None
 
     def assign_indexes(self, bus):
         self.bus_index = bus[Buses.bus_key_[self.Bus]].bus_index
@@ -89,7 +90,7 @@ class Generators:
 
     def check_dP(self, t):
         # include droop dP here?
-        if self.disturbance_t_start <= t <= self.disturbance_t_stop:
+        if (self.disturbance_t_start != None) and self.disturbance_t_start <= t <= self.disturbance_t_stop:
             return self.disturbance_dP
         else:
             return 0.0

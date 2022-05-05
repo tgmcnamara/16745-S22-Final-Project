@@ -1,0 +1,35 @@
+{
+    "synch_gen": [
+        {
+            "unit": 1,
+            "bus": 1,
+            "inertia": 23.64,
+            "droop": 0.05,
+            "damping": 0.0016
+        },
+        {
+            "unit": 2,
+            "bus": 2,
+            "inertia": 6.4,
+            "droop": 0.05,
+            "damping": 0.0016
+        }
+    ],
+    "ibr":
+    [
+        {
+            "unit": 3,
+            "bus": 3
+        }
+    ],
+    "disturbance":
+    [
+        {
+            "type": "gen",
+            "bus": 2,
+            "scale": 0.3,
+            "tstart": 0.1,
+            "tstop": 1.0
+        }
+    ]
+}

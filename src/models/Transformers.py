@@ -60,10 +60,17 @@ class Transformers:
         self.from_index = bus[Buses.bus_key_[self.from_bus]].bus_index
         self.to_index = bus[Buses.bus_key_[self.to_bus]].bus_index
 
-    def stamp_admittance(self, Y):
+    def stamp_admittance_powerflow(self, Y):
         ys = self.G_pu + 1j*self.B_pu
-
         Y[self.from_index, self.from_index] += (ys + 1j*self.Bsh_raw)/self.tr**2
         Y[self.from_index, self.to_index] += -ys*1/(self.tr*np.exp(-1j*self.theta))
         Y[self.to_index, self.from_index] += -ys*1/(self.tr*np.exp(1j*self.theta))
         Y[self.to_index, self.to_index] += (ys + 1j*self.Bsh_raw)
+
+    def stamp_admittance_dc(self, Y):
+        # 
+        bi = 1/(self.x*self.tr)
+        Y[self.from_index, self.from_index] += bi
+        Y[self.from_index, self.to_index] += -bi
+        Y[self.to_index, self.from_index] += -bi
+        Y[self.to_index, self.to_index] += bi

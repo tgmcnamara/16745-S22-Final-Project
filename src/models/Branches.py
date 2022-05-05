@@ -59,8 +59,15 @@ class Branches:
         # self.Vr_to_node = bus[Buses.bus_key_[self.to_bus]].Vr_node
         # self.Vi_to_node = bus[Buses.bus_key_[self.to_bus]].Vi_node
 
-    def stamp_admittance(self, Y):
+    def stamp_admittance_powerflow(self, Y):
         Y[self.from_index, self.from_index] += self.G_pu + 1j*self.B_pu
         Y[self.from_index, self.to_index] += -(self.G_pu + 1j*self.B_pu)
         Y[self.to_index, self.from_index] += -(self.G_pu + 1j*self.B_pu)
         Y[self.to_index, self.to_index] += (self.G_pu + 1j*self.B_pu)
+
+    def stamp_admittance_dc(self, Y):
+        bi = 1/self.x
+        Y[self.from_index, self.from_index] += bi
+        Y[self.from_index, self.to_index] += -bi
+        Y[self.to_index, self.from_index] += -bi
+        Y[self.to_index, self.to_index] += bi

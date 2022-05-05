@@ -55,5 +55,4 @@ class Shunts:
         self.B_pu = B_MVAR/global_vars.base_MVA
 
     def assign_indexes(self, bus):
-        self.Vr_node = bus[Buses.bus_key_[self.Bus]].Vr_node
-        self.Vi_node = bus[Buses.bus_key_[self.Bus]].Vi_node
+        self.bus_index = bus[Buses.bus_key_[self.Bus]].bus_index

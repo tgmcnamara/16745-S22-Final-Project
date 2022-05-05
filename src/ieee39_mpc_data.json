@@ -77,8 +77,8 @@
             "type": "gen",
             "bus": 33,
             "scale": 0.6,
-            "tstart": 0.5,
-            "tstop": 5.0
+            "tstart": 0.1,
+            "tstop": 1.0
         }
     ]
 }

@@ -31,6 +31,8 @@ def parse_network(rawfile, jsonfile):
     input_counter = count(0)
     synch_gen = []
     ibr = []
+    pmax_tot = sum([ele.Pmax for ele in generator])
+    use_pwd_inertia = True
     for ele in gen_buses:
         ele.assign_nodes()
         # get corresponding gen and assign its notes
@@ -38,7 +40,10 @@ def parse_network(rawfile, jsonfile):
         gen_ele = [g for g in generator if g.Bus == ele.Bus][0]
         gen_data = [gd for gd in extra_data['synch_gen'] if gd['bus'] == ele.Bus][0]
         gen_ele.IBR = False
-        gen_ele.inertia = gen_data['inertia']*2/(120*np.pi)
+        if use_pwd_inertia:
+            gen_ele.inertia = 2*gen_data['inertia']#/(120*np.pi)
+        else:
+            gen_ele.inertia = gen_ele.Pmax/pmax_tot
         gen_ele.damping = gen_data['damping']
         gen_ele.droop = gen_data['droop']
         gen_ele.assign_indexes_MPC(state_counter, input_counter, len(gen_buses))
@@ -47,6 +52,7 @@ def parse_network(rawfile, jsonfile):
         ele.assign_nodes()
         ibr_ele = [g for g in generator if g.Bus == ele.Bus][0]
         ibr_ele.IBR = True
+        ibr_ele.delP_hist = []
         ibr_ele.assign_indexes_MPC(state_counter, input_counter, len(gen_buses))
         ibr.append(ibr_ele)
     for ele in pq_buses:
@@ -73,41 +79,51 @@ def parse_network(rawfile, jsonfile):
         ele.assign_indexes(bus)
     for ele in load:
         ele.assign_indexes(bus)
+    for ele in shunt:
+        ele.assign_indexes(bus)
     slack_bus = [ele for ele in bus if ele.Type == 3][0]
     slack_ind = bus[Buses.bus_key_[slack_bus.Bus]].bus_index
 
     # generate Y matrix
     size_Y = Buses._node_index.__next__()
-    Yfull = np.zeros((size_Y, size_Y), dtype=np.complex128)
+    Bmat = np.zeros((size_Y, size_Y), dtype=np.float)
     for ele in branch:
-        ele.stamp_admittance(Yfull)
+        ele.stamp_admittance_dc(Bmat)
     for ele in transformer:
-        ele.stamp_admittance(Yfull)
-    # isolate the complex admittance part
-    Bmat = np.imag(Yfull)
-
-    zr = []
-    zc = []
-    for ind in range(Bmat.shape[0]):
-        if np.count_nonzero(Bmat[ind,:]) == 0:
-            zr.append(ind)
-        if np.count_nonzero(Bmat[:,ind]) == 0:
-            zc.append(ind)
+        ele.stamp_admittance_dc(Bmat)
 
     # generate delta P vector
-    dP_full = np.zeros(size_Y)
+    Pload = np.zeros(size_Y)
+    Pgen = np.zeros(size_Y)
     for ele in generator:
-        dP_full[ele.bus_index] += ele.P
-    for ele in generator:
-        dP_full[ele.bus_index] -= ele.P
+        Pgen[ele.bus_index] += ele.P
+    for ele in load:
+        Pload[ele.bus_index] += ele.P
+    for ele in shunt:
+        Pload[ele.bus_index] += ele.G_pu
+    dP_full = Pgen - Pload
+    # TODO - include Pshift term for transformers    
 
     # run DC power flow
     # remove slack row/col
     B_dcpf = np.delete(Bmat, slack_ind, axis=0)
     B_dcpf = np.delete(B_dcpf, slack_ind, axis=1)
     dP_dcpf = np.delete(dP_full, slack_ind)
-    dcpf_sol = np.linalg.solve(B_dcpf, dP_dcpf)
-    
+    th_sol_red = np.linalg.solve(B_dcpf, dP_dcpf)
+
+    print("DC Power Flow solutions:")
+    th_sol = np.insert(th_sol_red, slack_ind, 0.0) + slack_bus.Va_init*np.pi/180
+    P_sol = Bmat @ th_sol
+    for ind in range(len(bus)):
+        bus_ele = bus[Buses.bus_key_[(ind+1)]]
+        th = th_sol[bus_ele.bus_index]
+        bus_ele.th_dc_sol = th
+        print("Bus %d: %.3f" % (ind+1, th*180/np.pi))
+    for ele in generator:
+        ele.Pss = P_sol[ele.bus_index] + Pload[ele.bus_index]
+        if not ele.IBR:
+            ele.Pss += ele.damping # assuming damping value is per-unitized
+            
     # apply kron reduction to B matrix
     b0_ind = ibr_buses[0].bus_index
     b1_ind = pq_buses[0].bus_index
@@ -126,6 +142,7 @@ def parse_network(rawfile, jsonfile):
     Bgi_hat = Bgi - (Bgl @ Bll_inv @ Bli)
     Big_hat = Big - (Bil @ Bll_inv @ Blg)
     Bii_hat = Bii - (Bil @ Bll_inv @ Bli)
+    B_hat = np.block([[Bgg_hat,Bgi_hat], [Big_hat, Bii_hat]])
 
     sim_data = {
         'synch_gen': synch_gen,
@@ -135,6 +152,7 @@ def parse_network(rawfile, jsonfile):
         'Bgi': Bgi_hat,
         'Big': Big_hat,
         'Bii': Bii_hat,
+        'Bhat': B_hat
     }
 
     return sim_data
