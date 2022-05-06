@@ -6,20 +6,41 @@ from build_QP_matrices import build_qp, update_qp
 from true_dynamics import DC_dynamics
 from matplotlib import pyplot as plt
 
-sys.path.append("..")
-def run_ibr_mpc():
-    # define simulation parameters
-    tf = 10
-    h = 0.05
-    N = 10
-    # play with these?
-    omega_weight = 10.0
-    rocof_weight = 10.0
-    constrained = False
+# TODO
+# - generate closed loop policy using DLQR
+# - start from small perturbation and see if it can just get it to origin
+# - Kalman observer for disturbance estimation
 
+sys.path.append("..")
+def run_ibr_controller():
+    # define simulation parameters
+    tf = 30
+    h = 0.05
+    init_at_ss = False
+    # penalize frequency deviation from 60 Hz
+    omega_weight = 10.0
+    # penalize rate of change of frequency deviation
+    rocof_weight = 10.0
+    # penalize use of IBRs (can leave at 0)
+    dPibr_weight = 0.0
+
+    # model the synch gen's governor droop controller in state space model
+    include_Pm_droop = False
+
+    # select whether to use a simple LQR controller 
+    use_lqr = False
+    # time step horizon for MPC, if applicable
+    N = 10
+
+    # constraint mode:
+    # 0 - no constraints
+    # 1 - upper and lower bounds on dP for IBRs
+    # 2 - battery energy relation to dP for IBRs
+    constraint_mode = 0
+    
     # parse file and get initial state
-    # 0 - 9 bus
-    # 1 - 39 bus
+    # 0 - 9 bus, 3 gen (1 IBR)
+    # 1 - 39 bus, 10 gen (2 IBR)
     case = 0
 
     if case == 1:
@@ -28,17 +49,23 @@ def run_ibr_mpc():
     else:
         rawfile = 'case9_dc_sol.raw'
         jsonfile = 'case9_mpc_data.json'
-    sim_data = parse_network(rawfile, jsonfile)
-    n = len(sim_data['synch_gen'])
-    m = len(sim_data['ibr'])    
+    sim_data = parse_network(rawfile, jsonfile, constraint_mode, include_Pm_droop)
+    n = sim_data['n']
+    m = sim_data['m']
+    ngen = len(sim_data['synch_gen'])
+    nibr = len(sim_data['ibr'])
 
     # assuming we're at steady state before disturbance,
     # so dtheta and domega are 0 initially
-    x0 = np.zeros(2*n)
+    x0 = np.zeros(n)
+    if not init_at_ss:
+        # initial angle deviations
+        # 0?
+        # initial freq deviations
+        x0[ngen:2*ngen] = -.01 + 0.001*np.random.randn(ngen)
 
     # set up controller
-    use_paper_ss = True
-    qp, qp_info = build_qp(sim_data, x0, N, n, m, omega_weight, rocof_weight, h, constrained, use_paper_ss)
+    qp, qp_info = build_qp(sim_data, x0, N, h, omega_weight, rocof_weight, dPibr_weight, constraint_mode, include_Pm_droop)
 
     # run simulation
     times = np.arange(0, tf+h, h)

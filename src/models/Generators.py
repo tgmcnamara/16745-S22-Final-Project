@@ -65,28 +65,31 @@ class Generators:
         self.damping = None
         self.droop = None
         
-
         self.domega_index = None
         self.ddelta_index = None
+        self.dPmech_index = None
 
         self.disturbance_t_start = None
         self.disturbance_t_stop = None
         self.disturbance_dP = None
 
         # variables if it is an IBR
-        self.IBR = None
-        self.input_index = None
-        self.delP_hist = None
+        self.IBR = None # bool
+        self.Ebatt_index = None # int - index in state vector, if applicable
+        self.input_index = None # int - index in U
+        self.delP_hist = None # tracked for graphing purposes
 
     def assign_indexes(self, bus):
         self.bus_index = bus[Buses.bus_key_[self.Bus]].bus_index
 
-    def assign_indexes_MPC(self, state_counter, input_counter, n):
+    def assign_indexes_MPC(self, state_counter, input_counter, n, include_gov_dynamics=False):
         if self.IBR:
             self.input_index = input_counter.__next__()
         else:
             self.domega_index = state_counter.__next__() 
             self.dtheta_index = self.domega_index + n
+            if include_gov_dynamics:
+                self.dPmech_index = self.domega_index + 2*n
 
     def check_dP(self, t):
         # include droop dP here?
