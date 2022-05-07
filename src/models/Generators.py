@@ -56,18 +56,22 @@ class Generators:
         self.Qmin = Qmin/global_vars.base_MVA
         self.Pmax = Pmax/global_vars.base_MVA
         self.Pmin = Pmin/global_vars.base_MVA
+        if self.Bus == 3:
+            self.Pmax = 1.0
+            self.Pmin = 0.7
 
         self.id = self._ids.__next__()
 
-        self.Pss = None
         # variables if its a synch gen
         self.inertia = None
         self.damping = None
-        self.droop = None
+        self.droop_R = None
+        self.droop_T = None
+        self.droop_Pss = None
         
-        self.domega_index = None
-        self.ddelta_index = None
-        self.dPmech_index = None
+        self.ddelta_index = None # int - index in state vector
+        self.domega_index = None # int - index in state vector
+        self.dPmech_index = None # int - index in state vector, if applicable
 
         self.disturbance_t_start = None
         self.disturbance_t_stop = None
@@ -77,19 +81,25 @@ class Generators:
         self.IBR = None # bool
         self.Ebatt_index = None # int - index in state vector, if applicable
         self.input_index = None # int - index in U
-        self.delP_hist = None # tracked for graphing purposes
 
     def assign_indexes(self, bus):
         self.bus_index = bus[Buses.bus_key_[self.Bus]].bus_index
 
-    def assign_indexes_MPC(self, state_counter, input_counter, n, include_gov_dynamics=False):
+    def assign_indexes_ctrl(self, state_counter, input_counter, ng, constraint_mode, include_Pm_droop=False):
+        # index order should be:
+        # -all synch gen angles
+        # -all synch gen frequencies
+        # -all gen Pmech to track droop LPF (if applicable)
+        # -IBR battery state of charge (if applicable)
         if self.IBR:
             self.input_index = input_counter.__next__()
+            if constraint_mode == 2:
+                self.Ebatt_index = state_counter.__next__()
         else:
-            self.domega_index = state_counter.__next__() 
-            self.dtheta_index = self.domega_index + n
-            if include_gov_dynamics:
-                self.dPmech_index = self.domega_index + 2*n
+            self.dtheta_index = state_counter.__next__() 
+            self.domega_index = self.dtheta_index + ng
+            if include_Pm_droop:
+                self.dPmech_index = self.domega_index + 2*ng
 
     def check_dP(self, t):
         # include droop dP here?

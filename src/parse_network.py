@@ -5,7 +5,7 @@ from parsers.Data import Bus
 from parsers.parser import parse_raw
 from models.Buses import Buses
 
-def parse_network(rawfile, jsonfile):
+def parse_network(rawfile, jsonfile, constraint_mode, include_Pm_droop):
     # using a parser from our lab group
     # read data from file
     parsed_data = parse_raw(rawfile)
@@ -27,12 +27,14 @@ def parse_network(rawfile, jsonfile):
     ibr_buses = [ele for ele in bus if ele.Type != 1 and ele.Bus in ibr_set]
     pq_buses = [ele for ele in bus if ele.Type == 1]
 
+    ng = len(gen_buses)
+    nibr = len(ibr_buses)
+
     state_counter = count(0)
     input_counter = count(0)
     synch_gen = []
     ibr = []
     pmax_tot = sum([ele.Pmax for ele in generator])
-    use_pwd_inertia = True
     for ele in gen_buses:
         ele.assign_nodes()
         # get corresponding gen and assign its notes
@@ -40,23 +42,30 @@ def parse_network(rawfile, jsonfile):
         gen_ele = [g for g in generator if g.Bus == ele.Bus][0]
         gen_data = [gd for gd in extra_data['synch_gen'] if gd['bus'] == ele.Bus][0]
         gen_ele.IBR = False
-        if use_pwd_inertia:
-            gen_ele.inertia = 2*gen_data['inertia']#/(120*np.pi)
-        else:
-            gen_ele.inertia = gen_ele.Pmax/pmax_tot
+        gen_ele.inertia = gen_data['inertia']*2/(120*np.pi)
+        # a different way of estimating inertia
+        # gen_ele.inertia = gen_ele.Pmax/pmax_tot
         gen_ele.damping = gen_data['damping']
-        gen_ele.droop = gen_data['droop']
-        gen_ele.assign_indexes_MPC(state_counter, input_counter, len(gen_buses))
+        gen_ele.droop_R = gen_data['droop_R']
+        gen_ele.droop_T = gen_data['droop_T']
+        gen_ele.assign_indexes_ctrl(state_counter, input_counter, ng, constraint_mode, include_Pm_droop)
         synch_gen.append(gen_ele)
     for ele in ibr_buses:
         ele.assign_nodes()
         ibr_ele = [g for g in generator if g.Bus == ele.Bus][0]
         ibr_ele.IBR = True
-        ibr_ele.delP_hist = []
-        ibr_ele.assign_indexes_MPC(state_counter, input_counter, len(gen_buses))
+        ibr_ele.assign_indexes_ctrl(state_counter, input_counter, ng, constraint_mode, include_Pm_droop)
         ibr.append(ibr_ele)
     for ele in pq_buses:
         ele.assign_nodes()
+    n = state_counter.__next__()
+    if include_Pm_droop and constraint_mode == 2:
+        n = n*4
+    elif include_Pm_droop or constraint_mode == 2:
+        n = n*3
+    else:
+        n = n*2
+    m = input_counter.__next__()
 
     bus_idx = 0
     for ele in bus:
@@ -70,7 +79,8 @@ def parse_network(rawfile, jsonfile):
             gen_ele.disturbance_t_stop = disturbance['tstop']
             gen_ele.disturbance_dP = -disturbance['scale']*gen_ele.P
 
-
+    # solve dc power flow to get initial P values
+    # (just in case they werent the solution values in the .raw file)
     for ele in branch:
         ele.assign_indexes(bus)
     for ele in transformer:
@@ -123,6 +133,8 @@ def parse_network(rawfile, jsonfile):
         ele.Pss = P_sol[ele.bus_index] + Pload[ele.bus_index]
         if not ele.IBR:
             ele.Pss += ele.damping # assuming damping value is per-unitized
+        ele.dPmax = ele.Pmax - ele.Pss
+        ele.dPmin = ele.Pmin - ele.Pss
             
     # apply kron reduction to B matrix
     b0_ind = ibr_buses[0].bus_index
@@ -147,6 +159,8 @@ def parse_network(rawfile, jsonfile):
     sim_data = {
         'synch_gen': synch_gen,
         'ibr': ibr,
+        'n': n,
+        'm': m,
         'load': load,
         'Bgg': Bgg_hat,
         'Bgi': Bgi_hat,

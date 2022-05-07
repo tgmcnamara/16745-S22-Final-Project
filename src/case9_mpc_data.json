@@ -4,15 +4,17 @@
             "unit": 1,
             "bus": 1,
             "inertia": 23.64,
-            "droop": 0.05,
-            "damping": 0.0016
+            "droop_R": 0.05,
+            "droop_T": 0.2,
+            "damping": 0.00
         },
         {
             "unit": 2,
             "bus": 2,
             "inertia": 6.4,
-            "droop": 0.05,
-            "damping": 0.0016
+            "droop_R": 0.05,
+            "droop_T": 0.2,
+            "damping": 0.00
         }
     ],
     "ibr":
