@@ -22,6 +22,7 @@ class QPinfo:
         self.N = N
         self.h = h
         self.omega_weight = omega_weight
+        self.dth_weight = 0.1*omega_weight
         self.rocof_weight = rocof_weight
         self.dPibr_weight = dPibr_weight
         self.bgg = None
@@ -34,87 +35,9 @@ class QPinfo:
         # 1 - upper and lower bounds on dP for IBRs
         # 2 - battery energy relation to dP for IBRs
         self.constraint_mode = constraint_mode
-
         self.include_Pm_droop = include_Pm_droop
-
         # allow using the incorrect state space model from the referenced paper
         self.use_paper_ss = use_paper_ss
-
-    def build_LQR(self, sim_data):
-        # create a closed-loop policy u = -K*x
-        # for comparison to MPC
-        # doesn't allow constraints or ROCOF in cost function
-        m = self.m
-        ng = self.ng
-        ni = self.ni
-        # generate A and B if they haven't been made yet
-        if not self.A:
-            self.build_A(sim_data)
-        if not self.Bu:
-            self.build_B(sim_data)
-        # generate a positive definite Q and R
-        if self.dPibr_weight == 0:
-            # some nominal weight on inputs so R is pos. def.
-            Qul = 0.001*self.omega_weight*np.identity(ng)
-            R = 0.001*self.omega_weight*np.identity(m)
-        else:
-            Qul = 0.001*self.omega_weight*np.identity(ng)
-            R = self.dPibr_weight*np.identity(m)
-        Qll = self.omega_weight*np.identity(ng)
-        Q = np.block([[Qul, np.zeros((ng,ng))], [np.zeros((ng,ng)), Qll]])
-        (self.K_dlqr, self.S_dlqr, self.E_dlqr) = control.dlqr(self.A, self.Bu, Q, R)
-        return self.K_dlqr
-
-    def build_P(self, sim_data):
-        ng = self.ng
-        ni = self.ni
-        m = self.m
-        nm = self.n + m
-        h2 = self.h**2
-        # diagonal freq costs (include domega and ROCOF costs)
-        Qw_diag_weights = (self.omega_weight + 2/h2*self.rocof_weight)*np.ones(ng)
-        # n x n in the omega,omega block
-        Qw_diag = sparse.diags(Qw_diag_weights)
-        Qw_diag_f_weights = (self.omega_weight + 1/h2*self.rocof_weight)*np.ones(ng)
-        Qw_diag_f = sparse.diags(Qw_diag_f_weights)
-        # off diagonal costs for ROCOF
-        Qwoff_weights = (-1/h2*self.rocof_weight)*np.ones(ng)
-        Qw_offdiag = sparse.diags(Qwoff_weights)    
-        R = self.dPibr_weight * sparse.identity(m)
-        # dPul = sparse.csc_matrix(self.dPibr_weight*(sim_data['Big'].transpose() @ sim_data['Big']))
-        # dPur = sparse.csc_matrix(self.dPibr_weight*(sim_data['Big'].transpose() @ sim_data['Bii']))
-        # dPll = sparse.csc_matrix(self.dPibr_weight*(sim_data['Bii'].transpose() @ sim_data['Big']))
-        # dPlr = sparse.csc_matrix(self.dPibr_weight*(sim_data['Bii'].transpose() @ sim_data['Bii']))
-        # diag_block = sparse.bmat([[dPul, None, dPur], [None, Qw_diag, None], [dPll, None, dPlr]])
-        Qth_weights = sparse.diags(0.01*self.omega_weight*np.ones(ng))
-        diag_blocks = [Qth_weights, Qw_diag]
-        if self.include_Pm_droop:
-            QPm_zeros = sparse.csc_matrix((ng,ng), dtype=float)
-            diag_blocks.append(QPm_zeros)
-        if self.constraint_mode == 2:
-            QEbatt_zeros = sparse.csc_matrix((ni,ni), dtype=float)
-            diag_blocks.append(QEbatt_zeros)
-        diag_blocks.append(R)
-        diag_block = sparse.block_diag(diag_blocks)
-        P = sparse.csc_matrix((self.N*nm, self.N*nm))
-        # terms that only apply to the 0th input
-        P[:m,:m] = R
-        for k in range(self.N-1):
-                # main diagonal blocks
-                P[(m+k*nm):(m+(k+1)*nm), (m+k*nm):(m+(k+1)*nm)] = diag_block
-                # ROCOF off diagonal to the right
-                P[(m+ng+k*nm):(m+2*ng+k*nm), (m+(k+1)*nm+ng):(m+(k+1)*nm+2*ng)] = Qw_offdiag
-                # ROCOF off diagonal below
-                P[(m+(k+1)*nm+ng):(m+(k+1)*nm+2*ng), (m+k*nm+ng):(m+k*nm+2*ng)] = Qw_offdiag
-        # deal with the diagonal cost terms for the Nth state
-        P[-ng:,-ng:] = Qw_diag_f
-        return P
-
-    def build_q(self, sim_data, x0):
-        q = np.zeros(self.N*(self.n+self.m))
-        # q[:self.m] = self.dPibr_weight*(sim_data['Big'] @ x0[:self.ng])
-        q[(self.ng+self.m):(2*self.ng+self.m)] = -self.rocof_weight/(self.h**2)*x0[self.ng:]
-        return q
 
     def build_A(self, sim_data):
         ng = self.ng
@@ -212,6 +135,85 @@ class QPinfo:
             Bu = np.block([[Bu], [-self.h*np.identity(ni)]])
         self.Bu = Bu
         self.Bd = Bd
+
+    def build_Cmeas(self, sim_data):
+        pass
+        # assume we can only measure the 
+
+    def build_LQR(self, sim_data):
+        # create a closed-loop policy u = -K*x
+        # for comparison to MPC
+        # doesn't allow constraints or ROCOF in cost function
+        m = self.m
+        ng = self.ng
+        ni = self.ni
+        # generate A and B if they haven't been made yet
+        if not self.A:
+            self.build_A(sim_data)
+        if not self.Bu:
+            self.build_B(sim_data)
+        # generate a positive definite Q and R
+        if self.dPibr_weight == 0:
+            # some nominal weight on inputs so R is pos. def.
+            R = 0.001*self.omega_weight*np.identity(m)
+        else:            
+            R = self.dPibr_weight*np.identity(m)
+        Qul = self.dth_weight*np.identity(ng)
+        Qll = self.omega_weight*np.identity(ng)
+        Q = np.block([[Qul, np.zeros((ng,ng))], [np.zeros((ng,ng)), Qll]])
+        (self.K_dlqr, self.S_dlqr, self.E_dlqr) = control.dlqr(self.A, self.Bu, Q, R)
+        return self.K_dlqr
+
+    def build_P(self, sim_data):
+        ng = self.ng
+        ni = self.ni
+        m = self.m
+        nm = self.n + m
+        h2 = self.h**2
+        # diagonal freq costs (include domega and ROCOF costs)
+        Qw_diag_weights = (self.omega_weight + 2/h2*self.rocof_weight)*np.ones(ng)
+        # n x n in the omega,omega block
+        Qw_diag = sparse.diags(Qw_diag_weights)
+        Qw_diag_f_weights = (self.omega_weight + 1/h2*self.rocof_weight)*np.ones(ng)
+        Qw_diag_f = sparse.diags(Qw_diag_f_weights)
+        # off diagonal costs for ROCOF
+        Qwoff_weights = (-1/h2*self.rocof_weight)*np.ones(ng)
+        Qw_offdiag = sparse.diags(Qwoff_weights)    
+        R = self.dPibr_weight * sparse.identity(m)
+        # dPul = sparse.csc_matrix(self.dPibr_weight*(sim_data['Big'].transpose() @ sim_data['Big']))
+        # dPur = sparse.csc_matrix(self.dPibr_weight*(sim_data['Big'].transpose() @ sim_data['Bii']))
+        # dPll = sparse.csc_matrix(self.dPibr_weight*(sim_data['Bii'].transpose() @ sim_data['Big']))
+        # dPlr = sparse.csc_matrix(self.dPibr_weight*(sim_data['Bii'].transpose() @ sim_data['Bii']))
+        # diag_block = sparse.bmat([[dPul, None, dPur], [None, Qw_diag, None], [dPll, None, dPlr]])
+        Qth_weights = sparse.diags(self.dth_weight*np.ones(ng))
+        diag_blocks = [Qth_weights, Qw_diag]
+        if self.include_Pm_droop:
+            QPm_zeros = sparse.csc_matrix((ng,ng), dtype=float)
+            diag_blocks.append(QPm_zeros)
+        if self.constraint_mode == 2:
+            QEbatt_zeros = sparse.csc_matrix((ni,ni), dtype=float)
+            diag_blocks.append(QEbatt_zeros)
+        diag_blocks.append(R)
+        diag_block = sparse.block_diag(diag_blocks)
+        P = sparse.csc_matrix((self.N*nm, self.N*nm))
+        # terms that only apply to the 0th input
+        P[:m,:m] = R
+        for k in range(self.N-1):
+                # main diagonal blocks
+                P[(m+k*nm):(m+(k+1)*nm), (m+k*nm):(m+(k+1)*nm)] = diag_block
+                # ROCOF off diagonal to the right
+                P[(m+ng+k*nm):(m+2*ng+k*nm), (m+(k+1)*nm+ng):(m+(k+1)*nm+2*ng)] = Qw_offdiag
+                # ROCOF off diagonal below
+                P[(m+(k+1)*nm+ng):(m+(k+1)*nm+2*ng), (m+k*nm+ng):(m+k*nm+2*ng)] = Qw_offdiag
+        # deal with the diagonal cost terms for the Nth state
+        P[-ng:,-ng:] = Qw_diag_f
+        return P
+
+    def build_q(self, sim_data, x0):
+        q = np.zeros(self.N*(self.n+self.m))
+        # q[:self.m] = self.dPibr_weight*(sim_data['Big'] @ x0[:self.ng])
+        q[(self.ng+self.m):(2*self.ng+self.m)] = -self.rocof_weight/(self.h**2)*x0[self.ng:]
+        return q
 
     def build_bounds(self, sim_data, x0):
         n = self.n

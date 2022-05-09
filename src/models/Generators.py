@@ -57,8 +57,8 @@ class Generators:
         self.Pmax = Pmax/global_vars.base_MVA
         self.Pmin = Pmin/global_vars.base_MVA
         if self.Bus == 3:
-            self.Pmax = 1.1
-            self.Pmin = 0.6
+            self.Pmax = 1.2
+            self.Pmin = 0.5
 
         self.id = self._ids.__next__()
 

@@ -14,7 +14,7 @@ from matplotlib import pyplot as plt
 sys.path.append("..")
 def run_ibr_controller():
     # define simulation parameters
-    tf = 10
+    tf = 30
     h = 0.05
     init_at_ss = False
     # penalize frequency deviation from 60 Hz
@@ -32,15 +32,15 @@ def run_ibr_controller():
     include_Pm_droop = False
 
     # select whether to use a simple LQR controller 
-    use_lqr = False
+    use_lqr = True
     # time step horizon for MPC, if applicable
-    N = 20
+    N = 10
 
     # constraint mode:
     # 0 - no constraints
     # 1 - upper and lower bounds on dP for IBRs
     # 2 - battery energy relation to dP for IBRs
-    constraint_mode = 0
+    constraint_mode = 1
     
     # parse file and get initial state
     # 0 - 9 bus, 3 gen (1 IBR)
@@ -68,7 +68,7 @@ def run_ibr_controller():
         # 0?
         # initial freq deviations
         x0[ngen:ngen+1] = -(1/60) 
-        x0[ngen+1:ngen+2] = (0.9/60)
+        x0[ngen+1:ngen+2] = -(0.75/60)
 
     # set up controller
     if use_lqr:
@@ -116,7 +116,7 @@ def run_ibr_controller():
         u_sat = np.minimum(dPmaxs, np.maximum(u, dPmins))
         if u != u_sat:
             u = u_sat
-        inputs_hist[:,0] = u
+        inputs_hist[:,t_ind] = u
         # print("Gen angles: ", x_prev[:ngen]*180/np.pi)
         # print("domega: ", x_prev[ngen:])
         # print("IBR deltaP: ", u)
@@ -142,10 +142,8 @@ def run_ibr_controller():
     plt.ylabel('Generator frequency (Hz)')
 
     # calculate the dPs (up to N-1)
-
     ibr0 = sim_data['ibr'][0]
     plt.figure(2)
-    ibr_P = ibr0.Pss + inputs_hist[0,:]
     plt.plot(times[:-1], inputs_hist[0,:]) 
     plt.xlabel('Simulation time (sec)')
     plt.ylabel('IBR output delta P (p.u.)')
