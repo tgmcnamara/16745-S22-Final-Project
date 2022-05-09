@@ -27,9 +27,9 @@ def DC_dynamics(x, u, t, sim_data, qp_info):
     # for ele in sim_data['ibr']:
     #     ele.delP_hist.append(delP_inv[ele.input_index])        
     # collect the disturbances
-    delP = np.zeros(qp_info.n)
+    delP = np.zeros(ng)
     for ele in sim_data['synch_gen']:
-        delP[ele.domega_index] += ele.check_dP(t)
+        delP[ele.ddelta_index] += ele.check_dP(t)
     # turn off the disturbances for now
     delP = np.zeros(qp_info.ng)
     

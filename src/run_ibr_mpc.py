@@ -14,15 +14,15 @@ from matplotlib import pyplot as plt
 sys.path.append("..")
 def run_ibr_controller():
     # define simulation parameters
-    tf = 10
+    tf = 2
     h = 0.05
     init_at_ss = False
     # penalize frequency deviation from 60 Hz
-    omega_weight = 1.0
+    omega_weight = 10.0
     # penalize rate of change of frequency deviation
     rocof_weight = 1.0
     # penalize use of IBRs (can leave at 0)
-    dPibr_weight = 0.0
+    dPibr_weight = 0.1
 
     # use steady state model from original paper for comparison
     # (it is very much the wrong model)
@@ -66,8 +66,8 @@ def run_ibr_controller():
         # initial angle deviations
         # 0?
         # initial freq deviations
-        x0[ngen:ngen+1] = -.1 
-        x0[ngen+1:ngen+2] = .08
+        x0[ngen:ngen+1] = -(1/60) 
+        x0[ngen+1:ngen+2] = (0.9/60)
 
     # set up controller
     if use_lqr:
@@ -96,16 +96,14 @@ def run_ibr_controller():
             results_hist[t] = results
             u = results.x[:m]
         # apply saturation to u
-        u_min = np.linalg.inv(sim_data['Bii'])@(dPmins - sim_data['Big']@x_prev[:ngen])
-        u_max = np.linalg.inv(sim_data['Bii'])@(dPmaxs - sim_data['Big']@x_prev[:ngen])
-        u_sat = np.minimum(u_max, np.maximum(u, u_min))
+        u_sat = np.minimum(dPmaxs, np.maximum(u, dPmins))
         if u != u_sat:
             u = u_sat
         inputs_hist[:,0] = u
         print("t: %.2f" % t)
         print("Gen angles: ", x_prev[:ngen]*180/np.pi)
         print("domega: ", x_prev[ngen:])
-        print("IBR angles: ", u*180/np.pi)
+        print("IBR deltaP: ", u)
         # ideally run with more accurate dynamics
         x_next = DC_dynamics(x_prev, u, t, sim_data, qp_info)
         states_hist[:,t_ind+1] = x_next
@@ -128,15 +126,13 @@ def run_ibr_controller():
     plt.ylabel('Generator frequency (Hz)')
 
     # calculate the dPs (up to N-1)
-    theta_hist = states_hist[:ngen, :Nt-1]
-    dP_ibr = (sim_data['Big'] @ theta_hist) + (sim_data['Bii'] @ inputs_hist)
 
     ibr0 = sim_data['ibr'][0]
     plt.figure(2)
-    ibr_P = ibr0.P + dP_ibr[0,:]
-    plt.plot(times[:-1], ibr_P) 
+    ibr_P = ibr0.Pss + inputs_hist[0,:]
+    plt.plot(times[:-1], inputs_hist[0,:]) 
     plt.xlabel('Simulation time (sec)')
-    plt.ylabel('IBR output power (p.u.)')
+    plt.ylabel('IBR output delta P (p.u.)')
 
     plt.show()
 

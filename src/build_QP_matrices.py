@@ -57,21 +57,17 @@ class QPinfo:
             # some nominal weight on inputs so R is pos. def.
             Qul = 0.001*self.omega_weight*np.identity(ng)
             R = 0.001*self.omega_weight*np.identity(m)
-            N = None
         else:
-            Qul = self.dPibr_weight*(sim_data['Big'].transpose @ sim_data['Big'])
-            R = self.dPibr_weight*(sim_data['Bii'].transpose @ sim_data['Bii'])
-            N = self.dPibr_weight*np.block([[sim_data['Big']], np.zeros((ni,ng))])
+            Qul = 0.001*self.omega_weight*np.identity(ng)
+            R = self.dPibr_weight*np.identity(m)
         Qll = self.omega_weight*np.identity(ng)
         Q = np.block([[Qul, np.zeros((ng,ng))], [np.zeros((ng,ng)), Qll]])
-        if N != None:
-            (self.K_dlqr, self.S_dlqr, self.E_dlqr) = control.dlqr(self.A, self.Bu, Q, R, N)
-        else:
-            (self.K_dlqr, self.S_dlqr, self.E_dlqr) = control.dlqr(self.A, self.Bu, Q, R)
+        (self.K_dlqr, self.S_dlqr, self.E_dlqr) = control.dlqr(self.A, self.Bu, Q, R)
         return self.K_dlqr
 
     def build_P(self, sim_data):
         ng = self.ng
+        ni = self.ni
         m = self.m
         nm = self.n + m
         h2 = self.h**2
@@ -84,34 +80,46 @@ class QPinfo:
         # off diagonal costs for ROCOF
         Qwoff_weights = (-1/h2*self.rocof_weight)*np.ones(ng)
         Qw_offdiag = sparse.diags(Qwoff_weights)    
-        dPul = sparse.csc_matrix(self.dPibr_weight*(sim_data['Big'].transpose() @ sim_data['Big']))
-        dPur = sparse.csc_matrix(self.dPibr_weight*(sim_data['Big'].transpose() @ sim_data['Bii']))
-        dPll = sparse.csc_matrix(self.dPibr_weight*(sim_data['Bii'].transpose() @ sim_data['Big']))
-        dPlr = sparse.csc_matrix(self.dPibr_weight*(sim_data['Bii'].transpose() @ sim_data['Bii']))
-        diag_block = sparse.bmat([[dPul, None, dPur], [None, Qw_diag, None], [dPll, None, dPlr]])
+        R = self.dPibr_weight * sparse.identity(m)
+        # dPul = sparse.csc_matrix(self.dPibr_weight*(sim_data['Big'].transpose() @ sim_data['Big']))
+        # dPur = sparse.csc_matrix(self.dPibr_weight*(sim_data['Big'].transpose() @ sim_data['Bii']))
+        # dPll = sparse.csc_matrix(self.dPibr_weight*(sim_data['Bii'].transpose() @ sim_data['Big']))
+        # dPlr = sparse.csc_matrix(self.dPibr_weight*(sim_data['Bii'].transpose() @ sim_data['Bii']))
+        # diag_block = sparse.bmat([[dPul, None, dPur], [None, Qw_diag, None], [dPll, None, dPlr]])
+        Qth_zeros = sparse.csc_matrix((ng,ng), dtype=float)
+        diag_blocks = [Qth_zeros, Qw_diag]
+        if self.include_Pm_droop:
+            QPm_zeros = sparse.csc_matrix((ng,ng), dtype=float)
+            diag_blocks.append(QPm_zeros)
+        if self.constraint_mode == 2:
+            QEbatt_zeros = sparse.csc_matrix((ni,ni), dtype=float)
+            diag_blocks.append(QEbatt_zeros)
+        diag_blocks.append(R)
+        diag_block = sparse.block_diag(diag_blocks)
         P = sparse.csc_matrix((self.N*nm, self.N*nm))
         # terms that only apply to the 0th input
-        P[:m,:m] = dPlr
+        P[:m,:m] = R
         for k in range(self.N-1):
                 # main diagonal blocks
                 P[(m+k*nm):(m+(k+1)*nm), (m+k*nm):(m+(k+1)*nm)] = diag_block
                 # ROCOF off diagonal to the right
-                P[(m+ng+k*nm):((k+1)*nm), (m+ng+(k+1)*nm):((k+2)*nm)] = Qw_offdiag
+                P[(m+ng+k*nm):(m+2*ng+k*nm), (m+(k+1)*nm+ng):(m+(k+1)*nm+2*ng)] = Qw_offdiag
                 # ROCOF off diagonal below
-                P[(m+ng+(k+1)*nm):((k+2)*nm), (m+ng+k*nm):((k+1)*nm)] = Qw_offdiag
+                P[(m+(k+1)*nm+ng):(m+(k+1)*nm+2*ng), (m+k*nm+ng):(m+k*nm+2*ng)] = Qw_offdiag
         # deal with the diagonal cost terms for the Nth state
         P[-ng:,-ng:] = Qw_diag_f
         return P
 
     def build_q(self, sim_data, x0):
         q = np.zeros(self.N*(self.n+self.m))
-        q[:self.m] = self.dPibr_weight*(sim_data['Big'] @ x0[:self.ng])
-        q[self.m:(self.ng+self.m)] = -self.rocof_weight/(self.h**2)*x0[self.ng:]
+        # q[:self.m] = self.dPibr_weight*(sim_data['Big'] @ x0[:self.ng])
+        q[(self.ng+self.m):(2*self.ng+self.m)] = -self.rocof_weight/(self.h**2)*x0[self.ng:]
         return q
 
     def build_A(self, sim_data):
         ng = self.ng
         h = self.h
+        ni = self.ni
         gens = sim_data['synch_gen']
         m_vals = np.array([ele.inertia for ele in gens])
         d_vals = np.array([ele.damping for ele in gens])
@@ -125,11 +133,15 @@ class QPinfo:
             self.A = np.block([[Add, Adw], [Awd, Aww]])
             return
 
-        omega_nom = 120*np.pi # omega dynamics are in per unit
+        # omega states are in per unit (i.e. 1/(60Hz))
+        # whereas dtheta states are in radians
+        omega_nom = 120*np.pi
         Add = np.identity(ng)
         Adw = self.h*np.identity(ng)#*omega_nom
-        Awd = np.diag(-h/m_vals) @ sim_data['Bgg']
+        Awd = np.diag(h/m_vals) @ (-sim_data['Bgg'] + sim_data['Bgi']@np.linalg.inv(sim_data['Bii'])@sim_data['Big'])
         Aww = np.diag(1 + h/m_vals*(-d_vals))
+        A = np.block([[Add, Adw], [Awd, Aww]])
+        # governor dynamics (if applicable)
         if self.include_Pm_droop:
             P_vals = np.array([ele.Pss for ele in gens])
             R_droop = np.array([ele.R_droop for ele in gens])
@@ -139,15 +151,50 @@ class QPinfo:
             APmd = np.zeros((ng,ng))
             APmw = np.diagonal(-h*K_droop)
             APmPm = np.diagonal(1 - h*K_droop*R_droop)
-            self.A = np.block([[Add, Adw, AdPm], [Awd, Aww, AwPm], [APmd, APmw, APmPm]])
-        # TODO include battery charge dynamics
-        else:
-            self.A = np.block([[Add, Adw], [Awd, Aww]])
+            A_aug = np.zeros((3*ng,3*ng))
+            A_aug[:2*ng,2*ng] = A
+            A_aug[:ng,2*ng:] = AdPm
+            A_aug[ng:2*ng,2*ng:] = AwPm
+            A_aug[2*ng:,:ng] = APmd
+            A_aug[2*ng:,ng:2*ng] = APmw
+            A_aug[2*ng:,2*ng:] = APmPm
+            A = A_aug
+        # battery charge dynamics (if applicable)
+        # simple assumption that dE/dt = -dP
+        if self.constraint_mode == 2:
+            AdE = np.zeros((ng,ni))
+            AwE = np.zeros((ng,ni))
+            AEd = np.zeros((ni,ng))
+            AEw = np.zeros((ni,ng))
+            AEE = np.identity(ni)
+            if self.include_Pm_droop:
+                APmE = np.zeros((ng,ni))
+                AEPm = np.zeros((ni,ng))
+                A_aug = np.zeros((3*ng+ni,3*ng+ni))
+                A_aug[:3*ng,:3*ng] = A
+                A_aug[:ng, 3*ng:] = AdE
+                A_aug[ng:2*ng, 3*ng:] = AwE
+                A_aug[2*ng:3*ng, 3*ng:] = APmE
+                A_aug[3*ng:, :ng] = AEd
+                A_aug[3*ng:, ng:2*ng] = AEw
+                A_aug[3*ng:, 2*ng:3*ng] = AEPm
+                A_aug[3*ng:, 3*ng:] = AEE
+            else:
+                A_aug = np.zeros((2*ng+ni,2*ng+ni))
+                A_aug[:2*ng,:2*ng] = A
+                A_aug[:ng, 2*ng:] = AdE
+                A_aug[ng:2*ng, 2*ng:] = AwE
+                A_aug[2*ng:, :ng] = AEd
+                A_aug[2*ng:, ng:2*ng] = AEw
+                A_aug[3*ng:, 3*ng:] = AEE
+            A = A_aug
+        self.A = A
         print("Eigenvalues of A:")
         print(np.linalg.eigvals(self.A))
 
     def build_B(self, sim_data):
         ng = self.ng
+        ni = self.ni
         m = self.m
         gens = sim_data['synch_gen']
         m_vals = np.array([ele.inertia for ele in gens])
@@ -156,42 +203,68 @@ class QPinfo:
             self.Bu = np.block([[np.zeros((ng,m))], [np.diag(-1/m_vals) @ sim_data['Bgi']]])
             # effect of disturbances
             self.Bd = np.block([[np.zeros((ng, ng))], [np.diag(1/m_vals)]])
-        else:
-            self.Bu = np.block([[np.zeros((ng,m))], [np.diag(-self.h/m_vals) @ sim_data['Bgi']]])
-            self.Bd = np.block([[np.zeros((ng, ng))], [np.diag(self.h/m_vals)]])
+            return
+        Bu = np.block([[np.zeros((ng,m))], [np.diag(-self.h/m_vals) @ sim_data['Bgi']@np.linalg.inv(sim_data['Bii'])]])
+        Bd = np.block([[np.zeros((ng, ng))], [np.diag(self.h/m_vals)]])
+        if self.include_Pm_droop:
+            Bu = np.block([[Bu], [np.zeros((ng,m))]])
+        if self.constraint_mode == 2:
+            Bu = np.block([[Bu], [-self.h*np.identity(ni)]])
+        self.Bu = Bu
+        self.Bd = Bd
 
     def build_bounds(self, sim_data, x0):
         n = self.n
         ng = self.ng
+        ni = self.ni
         m = self.m
-        if self.constraint_mode == 1:
-            ub = np.zeros(self.N*(n+m))
-            ub[:n] = -self.A @ x0
-            lb = np.copy(ub)
-            dP_mins = np.zeros(m)
-            dP_maxs = np.zeros(m)
-            offset = self.N*n
-            for ele in sim_data['ibr']:
-                dP_mins[ele.input_index] = ele.Pmin - ele.Pss
-                dP_mins[ele.input_index] = ele.Pmax - ele.Pss
+        ub = np.zeros(self.N*n)
+        ub[:self.n] = -self.A @ x0
+        lb = np.copy(ub)
+        offset = self.N*n
+        if self.include_Pm_droop:
+            ub = np.append(ub, np.zeros(self.N*ng))
+            lb = np.append(lb, np.zeros(self.N*ng))
+            dPg_mins = np.zeros(ng)
+            dPg_maxs = np.zeros(ng)
+            for ele in sim_data['synch_gen']:
+                dPg_mins[ele.state_index] = ele.Pmin - ele.Pss
+                dPg_maxs[ele.state_index] = ele.Pmax - ele.Pss
             for k in range(self.N-1):
-                ub[(offset+k*m):(offset+(k+1)*m)] = dP_maxs
-                lb[(offset+k*m):(offset+(k+1)*m)] = dP_mins
-            # need to account part of dP_ibr0 term due to known gen angles
-            ub[offset:offset+m] += -sim_data['Big'] @ x0[self.n:]
-            lb[offset:offset+m] += -sim_data['Big'] @ x0[self.n:]
+                lb[(offset+k*ng):(offset+(k+1)*ng)] = dPg_mins
+                ub[(offset+k*ng):(offset+(k+1)*ng)] = dPg_maxs
+            offset += self.N*ng
+        if self.constraint_mode == 1:
+            # just dPmin ≤ i ≤ dPmax
+            ub = np.append(ub, np.zeros(self.N*m))
+            lb = np.append(lb, np.zeros(self.N*m))
+            dPi_mins = np.zeros(m)
+            dPi_maxs = np.zeros(m)
+            for ele in sim_data['ibr']:
+                dPi_mins[ele.input_index] = ele.Pmin - ele.Pss
+                dPi_maxs[ele.input_index] = ele.Pmax - ele.Pss
+            for k in range(self.N-1):
+                lb[(offset+k*m):(offset+(k+1)*m)] = dPi_mins
+                ub[(offset+k*m):(offset+(k+1)*m)] = dPi_maxs
         elif self.constraint_mode == 2:
-            pass
-            # TODO - battery constraints
-        else:
-            ub = np.zeros(self.N*n)
-            ub[:self.n] = -self.A @ x0
-            lb = np.copy(ub)
+            # TODO - battery charge constraints
+            ub = np.append(ub, np.zeros(self.N*ni))
+            lb = np.append(lb, np.zeros(self.N*ni))
+            Ebatt_mins = np.zeros(ni)
+            Ebatt_maxs = np.zeros(ni)
+            for ele in sim_data['ibr']:
+                Ebatt_mins[ele.input_index] = ele.Ebatt_min
+                Ebatt_maxs[ele.input_index] = ele.Ebatt_max
+            for k in range(self.N):
+                lb[(offset+k*ni):(offset+(k+1)*ni)] = dPi_mins
+                ub[(offset+k*ni):(offset+(k+1)*ni)] = dPi_maxs
+            
         return (ub, lb)
 
     def build_C(self, sim_data):
         n = self.n
         ng = self.ng
+        ni = self.ni
         m = self.m
         mn = n+m
         # self.build_admittance(branches, gens, ibrs)
@@ -199,10 +272,13 @@ class QPinfo:
         self.build_B(sim_data)
         Asp = sparse.csc_matrix(self.A)
         Bsp = sparse.csc_matrix(self.Bu)
+        n_constraints = self.N*n
+        if self.include_Pm_droop:
+            n_constraints += ng
         if self.constraint_mode == 1:
-            n_constraints = self.N*mn
-        else:
-            n_constraints = self.N*n
+            n_constraints += m
+        elif self.constraint_mode == 2:
+            n_constraints += ni
         C = sparse.csc_matrix((n_constraints, self.N*(mn)))
         C[:n, :m] = Bsp
         C[:n, m:(mn)] = -sparse.identity(n)
@@ -210,15 +286,21 @@ class QPinfo:
             C[k*n:(k+1)*n, m+(k-1)*mn:k*mn] = Asp
             C[k*n:(k+1)*n, k*mn:k*mn+m] = Bsp
             C[k*n:(k+1)*n, m+k*mn:(k+1)*mn] = -sparse.identity(n)        
+        offset = self.N*n
+        if self.include_Pm_droop:
+            # just 1's in the dPm indices for each time step
+            for k in range(self.N):
+                C[(offset+k*ng):(offset+(k+1)*ng), (m+2*ng+k*mn):(offset+(k+1)*ng)] = sparse.identity(ng)
+            offset += self.N*ng
         if self.constraint_mode == 1:
-            offset = self.N*n
-            C[offset:(offset+m), :m] = sim_data['Bii']
-            for k in range(1,self.N):
-                C[(offset+k*m):(offset+(k+1)*m), (k-1)*mn+m+ng:k*mn] = sim_data['Big']
-                C[(offset+k*m):(offset+(k+1)*m), k*mn:k*mn+m] = sim_data['Bii']
+            # just 1's in the u indices for each time step
+            # C[offset:(offset+m), :m] = sparse.identity(m)
+            for k in range(self.N):
+                C[(offset+k*m):(offset+(k+1)*m), k*mn:k*mn+m] = sparse.identity(m)
         elif self.constraint_mode == 2:
-            # TODO - battery constraints
-            pass
+            # just 1s on the Ebatt indices for each time step
+            for k in range(self.N):
+                C[(offset+k*ni):(offset+(k+1)*ni), k*mn:k*mn+m] = sparse.identity(m)
         return C
 
 def build_qp(sim_data, x0, N, h, omega_weight, rocof_weight, dPibr_weight, constraint_mode, include_Pm_droop, use_paper_ss):

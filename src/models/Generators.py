@@ -81,6 +81,12 @@ class Generators:
         self.IBR = None # bool
         self.Ebatt_index = None # int - index in state vector, if applicable
         self.input_index = None # int - index in U
+        # capacity of 36 p.u seconds --> 1 megawatt hour of storage, 
+        # would coset around $400k according to NREL report 
+        # (https://www.nrel.gov/docs/fy21osti/79236.pdf)
+        self.Ebatt_max = 36.0 
+        self.Ebatt_init = 30.0
+        self.Ebatt_min = 0.0
 
     def assign_indexes(self, bus):
         self.bus_index = bus[Buses.bus_key_[self.Bus]].bus_index
@@ -94,12 +100,14 @@ class Generators:
         if self.IBR:
             self.input_index = input_counter.__next__()
             if constraint_mode == 2:
-                self.Ebatt_index = state_counter.__next__()
+                self.state_index = state_counter.__next__()
+                self.Ebatt_index = self.state_index + 3*ng
         else:
-            self.dtheta_index = state_counter.__next__() 
-            self.domega_index = self.dtheta_index + ng
+            self.state_index = state_counter.__next__() 
+            self.dtheta_index = self.state_index
+            self.domega_index = self.state_index + ng
             if include_Pm_droop:
-                self.dPmech_index = self.domega_index + 2*ng
+                self.dPmech_index = self.state_index + 2*ng
 
     def check_dP(self, t):
         # include droop dP here?
