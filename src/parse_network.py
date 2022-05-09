@@ -28,7 +28,7 @@ def parse_network(rawfile, jsonfile, constraint_mode, include_Pm_droop):
     pq_buses = [ele for ele in bus if ele.Type == 1]
 
     ng = len(gen_buses)
-    nibr = len(ibr_buses)
+    ni = len(ibr_buses)
 
     state_counter = count(0)
     input_counter = count(0)
@@ -58,13 +58,11 @@ def parse_network(rawfile, jsonfile, constraint_mode, include_Pm_droop):
         ibr.append(ibr_ele)
     for ele in pq_buses:
         ele.assign_nodes()
-    n = state_counter.__next__()
-    if include_Pm_droop and constraint_mode == 2:
-        n = n*4
-    elif include_Pm_droop or constraint_mode == 2:
-        n = n*3
-    else:
-        n = n*2
+    n = 2*ng
+    if include_Pm_droop:
+        n += ng
+    if constraint_mode == 2:
+        n += ni
     m = input_counter.__next__()
 
     bus_idx = 0

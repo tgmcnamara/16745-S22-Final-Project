@@ -14,15 +14,15 @@ from matplotlib import pyplot as plt
 sys.path.append("..")
 def run_ibr_controller():
     # define simulation parameters
-    tf = 2
+    tf = 10
     h = 0.05
     init_at_ss = False
     # penalize frequency deviation from 60 Hz
-    omega_weight = 10.0
+    omega_weight = 1.0
     # penalize rate of change of frequency deviation
     rocof_weight = 1.0
     # penalize use of IBRs (can leave at 0)
-    dPibr_weight = 0.1
+    dPibr_weight = 1.0
 
     # use steady state model from original paper for comparison
     # (it is very much the wrong model)
@@ -32,9 +32,9 @@ def run_ibr_controller():
     include_Pm_droop = False
 
     # select whether to use a simple LQR controller 
-    use_lqr = True
+    use_lqr = False
     # time step horizon for MPC, if applicable
-    N = 4
+    N = 20
 
     # constraint mode:
     # 0 - no constraints
@@ -56,6 +56,7 @@ def run_ibr_controller():
     sim_data = parse_network(rawfile, jsonfile, constraint_mode, include_Pm_droop)
     n = sim_data['n']
     m = sim_data['m']
+    nm = n+m
     ngen = len(sim_data['synch_gen'])
     nibr = len(sim_data['ibr'])
 
@@ -87,23 +88,38 @@ def run_ibr_controller():
     states_hist[:,0] = x0
     x_prev = x0
 
+    check_dynamics_constraints = False
+
     for t_ind in range(Nt-1):
         t = times[t_ind]
+        print("t: %.2f" % t)
         if use_lqr:
             u = -K @ x_prev
         else:
             results = qp.solve()
             results_hist[t] = results
             u = results.x[:m]
+            z = results.x.reshape(N,nm)
+            # double check that dynamics constaints are correct
+            if check_dynamics_constraints:
+                resid1 = (qp_info.A @ x_prev) + (qp_info.Bu @ u) - z[0,m:]
+                print("1 step ahead dyn residual:")
+                print(resid1)
+                for i in range(1,N):
+                    u_test = z[i,:m]
+                    x_test = z[i-1,m:]
+                    x_pred = z[i,m:]
+                    resid = (qp_info.A @ x_test) + (qp_info.Bu @ u_test) - x_pred
+                    print("%d steps ahead dyn residual:" % (i+1))
+                    print(resid)
         # apply saturation to u
         u_sat = np.minimum(dPmaxs, np.maximum(u, dPmins))
         if u != u_sat:
             u = u_sat
         inputs_hist[:,0] = u
-        print("t: %.2f" % t)
-        print("Gen angles: ", x_prev[:ngen]*180/np.pi)
-        print("domega: ", x_prev[ngen:])
-        print("IBR deltaP: ", u)
+        # print("Gen angles: ", x_prev[:ngen]*180/np.pi)
+        # print("domega: ", x_prev[ngen:])
+        # print("IBR deltaP: ", u)
         # ideally run with more accurate dynamics
         x_next = DC_dynamics(x_prev, u, t, sim_data, qp_info)
         states_hist[:,t_ind+1] = x_next

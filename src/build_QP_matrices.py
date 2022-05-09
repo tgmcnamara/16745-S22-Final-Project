@@ -86,8 +86,8 @@ class QPinfo:
         # dPll = sparse.csc_matrix(self.dPibr_weight*(sim_data['Bii'].transpose() @ sim_data['Big']))
         # dPlr = sparse.csc_matrix(self.dPibr_weight*(sim_data['Bii'].transpose() @ sim_data['Bii']))
         # diag_block = sparse.bmat([[dPul, None, dPur], [None, Qw_diag, None], [dPll, None, dPlr]])
-        Qth_zeros = sparse.csc_matrix((ng,ng), dtype=float)
-        diag_blocks = [Qth_zeros, Qw_diag]
+        Qth_weights = sparse.diags(0.01*self.omega_weight*np.ones(ng))
+        diag_blocks = [Qth_weights, Qw_diag]
         if self.include_Pm_droop:
             QPm_zeros = sparse.csc_matrix((ng,ng), dtype=float)
             diag_blocks.append(QPm_zeros)
@@ -283,7 +283,7 @@ class QPinfo:
         C[:n, :m] = Bsp
         C[:n, m:(mn)] = -sparse.identity(n)
         for k in range(1,self.N):
-            C[k*n:(k+1)*n, m+(k-1)*mn:k*mn] = Asp
+            C[k*n:(k+1)*n, (m+(k-1)*mn):(k*mn)] = Asp
             C[k*n:(k+1)*n, k*mn:k*mn+m] = Bsp
             C[k*n:(k+1)*n, m+k*mn:(k+1)*mn] = -sparse.identity(n)        
         offset = self.N*n
@@ -304,18 +304,27 @@ class QPinfo:
         return C
 
 def build_qp(sim_data, x0, N, h, omega_weight, rocof_weight, dPibr_weight, constraint_mode, include_Pm_droop, use_paper_ss):
-    qp_info = QPinfo(sim_data, x0, N, h, omega_weight, rocof_weight, dPibr_weight, constraint_mode, include_Pm_droop)
+    qp_info = QPinfo(sim_data, x0, N, h, omega_weight, rocof_weight, dPibr_weight, constraint_mode, include_Pm_droop)    
     P = qp_info.build_P(sim_data)
     q = qp_info.build_q(sim_data, x0)
     C = qp_info.build_C(sim_data)
     (ub, lb) = qp_info.build_bounds(sim_data, x0)
+
     qp = osqp.OSQP()
-    qp.setup(P=P, q=q, A=C, l=lb, u=ub)
+    qp.setup(P=P, q=q, A=C, l=lb, u=ub, eps_abs=1e-5, eps_rel=1e-5,eps_prim_inf=1e-6)
+    qp_info.P = P
+    qp_info.q = q
+    qp_info.C = C
+    qp_info.lb = lb
+    qp_info.ub = ub
     return qp, qp_info
 
 def update_qp(qp, qp_info, sim_data, x0):
     q_new = qp_info.build_q(sim_data, x0)
     (ub_new, lb_new) = qp_info.build_bounds(sim_data, x0)
+    qp_info.q = q_new
+    qp_info.ub = ub_new
+    qp_info.lb = lb_new
     qp.update(q=q_new, l=lb_new, u=ub_new)
 
 def build_lqr(sim_data, x0, N, h, omega_weight, rocof_weight, dPibr_weight, constraint_mode, include_Pm_droop, use_paper_ss=False):

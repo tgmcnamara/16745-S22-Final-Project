@@ -6,7 +6,7 @@
             "inertia": 23.64,
             "droop_R": 0.05,
             "droop_T": 0.2,
-            "damping": 0.00
+            "damping": 0.016
         },
         {
             "unit": 2,
@@ -14,7 +14,7 @@
             "inertia": 6.4,
             "droop_R": 0.05,
             "droop_T": 0.2,
-            "damping": 0.00
+            "damping": 0.016
         }
     ],
     "ibr":
