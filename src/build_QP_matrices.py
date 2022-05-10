@@ -36,6 +36,7 @@ class QPinfo:
         # 2 - battery energy relation to dP for IBRs
         self.constraint_mode = constraint_mode
         self.include_Pm_droop = include_Pm_droop
+
         # allow using the incorrect state space model from the referenced paper
         self.use_paper_ss = use_paper_ss
 
@@ -136,10 +137,6 @@ class QPinfo:
         self.Bu = Bu
         self.Bd = Bd
 
-    def build_Cmeas(self, sim_data):
-        pass
-        # assume we can only measure the 
-
     def build_LQR(self, sim_data):
         # create a closed-loop policy u = -K*x
         # for comparison to MPC
@@ -154,7 +151,8 @@ class QPinfo:
             self.build_B(sim_data)
         # generate a positive definite Q and R
         if self.dPibr_weight == 0:
-            # some nominal weight on inputs so R is pos. def.
+            # if no weight on dP_ibr was defined, use some
+            # nominal weight on inputs so R is still pos. def.
             R = 0.001*self.omega_weight*np.identity(m)
         else:            
             R = self.dPibr_weight*np.identity(m)
@@ -215,15 +213,22 @@ class QPinfo:
         q[(self.ng+self.m):(2*self.ng+self.m)] = -self.rocof_weight/(self.h**2)*x0[self.ng:]
         return q
 
-    def build_bounds(self, sim_data, x0):
+    def build_bounds(self, sim_data, x0, d):
         n = self.n
         ng = self.ng
         ni = self.ni
         m = self.m
         ub = np.zeros(self.N*n)
         ub[:self.n] = -self.A @ x0
+        # Account for a disturbance estimate (if we have one)
+        if np.count_nonzero(d) > 0:
+            disturbance_effect = self.Bd @ d
+            # we assume the disturbance is constant across time
+            for k in range(self.N):
+                ub[k*n:(k+1)*n] -= disturbance_effect
         lb = np.copy(ub)
         offset = self.N*n
+
         if self.include_Pm_droop:
             ub = np.append(ub, np.zeros(self.N*ng))
             lb = np.append(lb, np.zeros(self.N*ng))
@@ -249,7 +254,7 @@ class QPinfo:
                 lb[(offset+k*m):(offset+(k+1)*m)] = dPi_mins
                 ub[(offset+k*m):(offset+(k+1)*m)] = dPi_maxs
         elif self.constraint_mode == 2:
-            # TODO - battery charge constraints
+            # battery charge constraints
             ub = np.append(ub, np.zeros(self.N*ni))
             lb = np.append(lb, np.zeros(self.N*ni))
             Ebatt_mins = np.zeros(ni)
@@ -260,7 +265,6 @@ class QPinfo:
             for k in range(self.N):
                 lb[(offset+k*ni):(offset+(k+1)*ni)] = dPi_mins
                 ub[(offset+k*ni):(offset+(k+1)*ni)] = dPi_maxs
-            
         return (ub, lb)
 
     def build_C(self, sim_data):
@@ -276,11 +280,11 @@ class QPinfo:
         Bsp = sparse.csc_matrix(self.Bu)
         n_constraints = self.N*n
         if self.include_Pm_droop:
-            n_constraints += ng
+            n_constraints += self.N*ng
         if self.constraint_mode == 1:
-            n_constraints += m
+            n_constraints += self.N*m
         elif self.constraint_mode == 2:
-            n_constraints += ni
+            n_constraints += self.N*ni
         C = sparse.csc_matrix((n_constraints, self.N*(mn)))
         C[:n, :m] = Bsp
         C[:n, m:(mn)] = -sparse.identity(n)
@@ -305,12 +309,12 @@ class QPinfo:
                 C[(offset+k*ni):(offset+(k+1)*ni), k*mn:k*mn+m] = sparse.identity(m)
         return C
 
-def build_qp(sim_data, x0, N, h, omega_weight, rocof_weight, dPibr_weight, constraint_mode, include_Pm_droop, use_paper_ss):
+def build_qp(sim_data, x0, d, N, h, omega_weight, rocof_weight, dPibr_weight, constraint_mode, include_Pm_droop):
     qp_info = QPinfo(sim_data, x0, N, h, omega_weight, rocof_weight, dPibr_weight, constraint_mode, include_Pm_droop)    
     P = qp_info.build_P(sim_data)
     q = qp_info.build_q(sim_data, x0)
     C = qp_info.build_C(sim_data)
-    (ub, lb) = qp_info.build_bounds(sim_data, x0)
+    (ub, lb) = qp_info.build_bounds(sim_data, x0, d)
 
     qp = osqp.OSQP()
     qp.setup(P=P, q=q, A=C, l=lb, u=ub, eps_abs=1e-5, eps_rel=1e-5,eps_prim_inf=1e-6)
@@ -321,15 +325,15 @@ def build_qp(sim_data, x0, N, h, omega_weight, rocof_weight, dPibr_weight, const
     qp_info.ub = ub
     return qp, qp_info
 
-def update_qp(qp, qp_info, sim_data, x0):
+def update_qp(qp, qp_info, sim_data, x0, d):
     q_new = qp_info.build_q(sim_data, x0)
-    (ub_new, lb_new) = qp_info.build_bounds(sim_data, x0)
+    (ub_new, lb_new) = qp_info.build_bounds(sim_data, x0, d)
     qp_info.q = q_new
     qp_info.ub = ub_new
     qp_info.lb = lb_new
     qp.update(q=q_new, l=lb_new, u=ub_new)
 
-def build_lqr(sim_data, x0, N, h, omega_weight, rocof_weight, dPibr_weight, constraint_mode, include_Pm_droop, use_paper_ss=False):
-    qp_info = QPinfo(sim_data, x0, N, h, omega_weight, rocof_weight, dPibr_weight, constraint_mode, include_Pm_droop, use_paper_ss)
+def build_lqr(sim_data, x0, N, h, omega_weight, rocof_weight, dPibr_weight, constraint_mode, include_Pm_droop):
+    qp_info = QPinfo(sim_data, x0, N, h, omega_weight, rocof_weight, dPibr_weight, constraint_mode, include_Pm_droop)
     K = qp_info.build_LQR(sim_data)
     return K, qp_info

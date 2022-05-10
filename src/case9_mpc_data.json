@@ -29,9 +29,9 @@
         {
             "type": "gen",
             "bus": 2,
-            "scale": 0.3,
+            "scale": 0.2,
             "tstart": 0.1,
-            "tstop": 1.0
+            "tstop": 5.0
         }
     ]
 }
