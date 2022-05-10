@@ -128,6 +128,7 @@ def run_ibr_controller():
     
     # inspect and plot some results
     rad_to_hz = 1/(2*np.pi)
+    plt.style.use('seaborn-darkgrid')
     plt.figure(1)
     if case == 1:
         freq_g4 = (states_hist[sim_data['synch_gen'][3].domega_index,:])*rad_to_hz + 60
@@ -139,6 +140,8 @@ def run_ibr_controller():
         plt.plot(times, freq_g1, times, freq_g2)
     plt.xlabel('Simulation time (sec)')
     plt.ylabel('Generator frequency (Hz)')
+    plt.legend(["Gen 1", "Gen 2"])
+    plt.savefig('gen_freq_dev.svg', format='svg')
 
     # calculate the dPs (up to N-1)
     ibr0 = sim_data['ibr'][0]
@@ -147,7 +150,6 @@ def run_ibr_controller():
     plt.xlabel('Simulation time (sec)')
     plt.ylabel('IBR output delta P (p.u.)')
 
-    plt.show()
 
 
 if __name__ == "__main__":
