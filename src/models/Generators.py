@@ -56,9 +56,6 @@ class Generators:
         self.Qmin = Qmin/global_vars.base_MVA
         self.Pmax = Pmax/global_vars.base_MVA
         self.Pmin = Pmin/global_vars.base_MVA
-        if self.Bus == 3:
-            self.Pmax = 1.2
-            self.Pmin = 0.5
 
         self.id = self._ids.__next__()
 
@@ -81,12 +78,13 @@ class Generators:
         self.IBR = None # bool
         self.Ebatt_index = None # int - index in state vector, if applicable
         self.input_index = None # int - index in U
-        # capacity of 36 p.u seconds --> 1 megawatt hour of storage, 
-        # would coset around $400k according to NREL report 
+        # capacity of 3.6 p.u seconds --> 0.1 megawatt hour of storage, 
+        # would cost around $40k according to NREL report 
         # (https://www.nrel.gov/docs/fy21osti/79236.pdf)
-        self.Ebatt_max = 36.0 
-        self.Ebatt_init = 30.0
+        self.Ebatt_max = 3.6 
         self.Ebatt_min = 0.0
+        # assume we start at ~85% charge
+        self.Ebatt_init = 3.0
 
     def assign_indexes(self, bus):
         self.bus_index = bus[Buses.bus_key_[self.Bus]].bus_index
@@ -100,8 +98,10 @@ class Generators:
         if self.IBR:
             self.input_index = input_counter.__next__()
             if constraint_mode == 2:
-                self.state_index = state_counter.__next__()
-                self.Ebatt_index = self.state_index + 3*ng
+                if include_Pm_droop:
+                    self.Ebatt_index = self.input_index + 3*ng
+                else:
+                    self.Ebatt_index = self.input_index + 2*ng
         else:
             self.state_index = state_counter.__next__() 
             self.dtheta_index = self.state_index

@@ -2,65 +2,58 @@
     "synch_gen": [
         {
             "unit": 1,
-            "bus": 39,
-            "inertia": 500,
-            "droop": 0.05,
+            "bus": 30,
+            "inertia": 42.0,
+            "droop_R": 0.05,
+            "droop_T": 0.2,
             "damping": 0.0016
         },
         {
             "unit": 2,
             "bus": 31,
             "inertia": 30.3,
-            "droop": 0.05,
+            "droop_R": 0.05,
+            "droop_T": 0.2,
             "damping": 0.0016
         },
         {
             "unit": 3,
             "bus": 32,
             "inertia": 35.8,
-            "droop": 0.05,
+            "droop_R": 0.05,
+            "droop_T": 0.2,
             "damping": 0.0016
         },
         {
             "unit": 4,
             "bus": 33,
             "inertia": 28.6,
-            "droop": 0.05,
+            "droop_R": 0.05,
+            "droop_T": 0.2,
             "damping": 0.0016
         },
         {
             "unit": 6,
             "bus": 35,
             "inertia": 34.8,
-            "droop": 0.05,
+            "droop_R": 0.05,
+            "droop_T": 0.2,
             "damping": 0.0016
         },
         {
             "unit": 7,
             "bus": 36,
             "inertia": 26.4,
-            "droop": 0.05,
-            "damping": 0.0016
-        },
-        {
-            "unit": 8,
-            "bus": 37,
-            "inertia": 24.3,
-            "droop": 0.05,
+            "droop_R": 0.05,
+            "droop_T": 0.2,
             "damping": 0.0016
         },
         {
             "unit": 9,
             "bus": 38,
             "inertia": 34.5,
-            "droop": 0.05,
-            "damping": 0.0016
-        },
-        {
-            "unit": 10,
-            "bus": 30,
-            "inertia": 42.0,
-            "droop": 0.05,
+            "droop_R": 0.05,
+            "droop_T": 0.2,
             "damping": 0.0016
         }
     ],
@@ -69,6 +62,10 @@
         {
             "unit": 5,
             "bus": 34
+        },
+        {
+            "unit": 8,
+            "bus": 37
         }
     ],
     "disturbance":
@@ -76,7 +73,7 @@
         {
             "type": "gen",
             "bus": 33,
-            "scale": 0.6,
+            "scale": 0.2,
             "tstart": 0.1,
             "tstop": 1.0
         }

@@ -1,5 +1,5 @@
 import numpy as np
-from scipy import sparse
+from scipy import sparse, linalg
 import osqp
 import control
 
@@ -61,7 +61,7 @@ class QPinfo:
         # whereas dtheta states are in radians
         omega_nom = 120*np.pi
         Add = np.identity(ng)
-        Adw = self.h*np.identity(ng)#*omega_nom
+        Adw = self.h*np.identity(ng)#omega_nom
         Awd = np.diag(h/m_vals) @ (-sim_data['Bgg'] + sim_data['Bgi']@np.linalg.inv(sim_data['Bii'])@sim_data['Big'])
         Aww = np.diag(1 + h/m_vals*(-d_vals))
         A = np.block([[Add, Adw], [Awd, Aww]])
@@ -85,6 +85,7 @@ class QPinfo:
             A = A_aug
         # battery charge dynamics (if applicable)
         # simple assumption that dE/dt = -dP
+        # Ebatt(k+1) = Ebatt(k) - h*dP(k)
         if self.constraint_mode == 2:
             AdE = np.zeros((ng,ni))
             AwE = np.zeros((ng,ni))
@@ -110,7 +111,7 @@ class QPinfo:
                 A_aug[ng:2*ng, 2*ng:] = AwE
                 A_aug[2*ng:, :ng] = AEd
                 A_aug[2*ng:, ng:2*ng] = AEw
-                A_aug[3*ng:, 3*ng:] = AEE
+                A_aug[2*ng:, 2*ng:] = AEE
             A = A_aug
         self.A = A
         print("Eigenvalues of A:")
@@ -132,8 +133,10 @@ class QPinfo:
         Bd = np.block([[np.zeros((ng, ng))], [np.diag(self.h/m_vals)]])
         if self.include_Pm_droop:
             Bu = np.block([[Bu], [np.zeros((ng,m))]])
+            Bd = np.block([[Bd], [np.zeros((ng,ng))]])
         if self.constraint_mode == 2:
             Bu = np.block([[Bu], [-self.h*np.identity(ni)]])
+            Bd = np.block([[Bd], [np.zeros((ni,ng))]])
         self.Bu = Bu
         self.Bd = Bd
 
@@ -156,9 +159,15 @@ class QPinfo:
             R = 0.001*self.omega_weight*np.identity(m)
         else:            
             R = self.dPibr_weight*np.identity(m)
-        Qul = self.dth_weight*np.identity(ng)
-        Qll = self.omega_weight*np.identity(ng)
-        Q = np.block([[Qul, np.zeros((ng,ng))], [np.zeros((ng,ng)), Qll]])
+        Qth = self.dth_weight*np.identity(ng)
+        Qw = self.omega_weight*np.identity(ng)
+        Q = linalg.block_diag(Qth, Qw)
+        if self.include_Pm_droop:
+            QPm = 0.01*self.omega_weight*np.identity(ng)
+            Q = linalg.block_diag(Q, QPm)
+        if self.constraint_mode == 2:
+            QEbatt = 0.01*self.dPibr_weight*np.identity(m)
+            Q = linalg.block_diag(Q, QEbatt)
         (self.K_dlqr, self.S_dlqr, self.E_dlqr) = control.dlqr(self.A, self.Bu, Q, R)
         return self.K_dlqr
 
@@ -189,7 +198,8 @@ class QPinfo:
             QPm_zeros = sparse.csc_matrix((ng,ng), dtype=float)
             diag_blocks.append(QPm_zeros)
         if self.constraint_mode == 2:
-            QEbatt_zeros = sparse.csc_matrix((ni,ni), dtype=float)
+            # need a nominal penalty on straying from battery initial charge state
+            QEbatt_zeros = 0.1*self.dPibr_weight * sparse.identity(ni)
             diag_blocks.append(QEbatt_zeros)
         diag_blocks.append(R)
         diag_block = sparse.block_diag(diag_blocks)
@@ -197,20 +207,28 @@ class QPinfo:
         # terms that only apply to the 0th input
         P[:m,:m] = R
         for k in range(self.N-1):
-                # main diagonal blocks
-                P[(m+k*nm):(m+(k+1)*nm), (m+k*nm):(m+(k+1)*nm)] = diag_block
-                # ROCOF off diagonal to the right
-                P[(m+ng+k*nm):(m+2*ng+k*nm), (m+(k+1)*nm+ng):(m+(k+1)*nm+2*ng)] = Qw_offdiag
-                # ROCOF off diagonal below
-                P[(m+(k+1)*nm+ng):(m+(k+1)*nm+2*ng), (m+k*nm+ng):(m+k*nm+2*ng)] = Qw_offdiag
+            # main diagonal blocks
+            P[(m+k*nm):(m+(k+1)*nm), (m+k*nm):(m+(k+1)*nm)] = diag_block
+            # ROCOF off diagonal to the right
+            P[(m+k*nm+ng):(m+k*nm+2*ng), (m+(k+1)*nm+ng):(m+(k+1)*nm+2*ng)] = Qw_offdiag
+            # ROCOF off diagonal below
+            P[(m+(k+1)*nm+ng):(m+(k+1)*nm+2*ng), (m+k*nm+ng):(m+k*nm+2*ng)] = Qw_offdiag
         # deal with the diagonal cost terms for the Nth state
         P[-ng:,-ng:] = Qw_diag_f
         return P
 
     def build_q(self, sim_data, x0):
-        q = np.zeros(self.N*(self.n+self.m))
+        m = self.m
+        nm = self.n + self.m
+        ni = self.ni
+        q = np.zeros(self.N*nm)
+        Ebatt_inits = np.array([ele.Ebatt_init for ele in sim_data['ibr']])
         # q[:self.m] = self.dPibr_weight*(sim_data['Big'] @ x0[:self.ng])
-        q[(self.ng+self.m):(2*self.ng+self.m)] = -self.rocof_weight/(self.h**2)*x0[self.ng:]
+        # Include ROCOF cost term that includes first frequency
+        q[(self.m+self.ng):(self.m+2*self.ng)] = -self.rocof_weight/(self.h**2)*x0[self.ng:2*self.ng]
+        if self.constraint_mode == 2:
+            for k in range(self.N):
+                q[m+(k+1)*nm-ni:m+(k+1)*nm] += Ebatt_inits
         return q
 
     def build_bounds(self, sim_data, x0, d):
@@ -263,8 +281,8 @@ class QPinfo:
                 Ebatt_mins[ele.input_index] = ele.Ebatt_min
                 Ebatt_maxs[ele.input_index] = ele.Ebatt_max
             for k in range(self.N):
-                lb[(offset+k*ni):(offset+(k+1)*ni)] = dPi_mins
-                ub[(offset+k*ni):(offset+(k+1)*ni)] = dPi_maxs
+                lb[(offset+k*ni):(offset+(k+1)*ni)] = Ebatt_mins
+                ub[(offset+k*ni):(offset+(k+1)*ni)] = Ebatt_maxs
         return (ub, lb)
 
     def build_C(self, sim_data):

@@ -37,14 +37,13 @@ def parse_network(rawfile, jsonfile, constraint_mode, include_Pm_droop):
     pmax_tot = sum([ele.Pmax for ele in generator])
     for ele in gen_buses:
         ele.assign_nodes()
-        # get corresponding gen and assign its notes
-        # this is a crap way to do this
+        # get corresponding gen and assign its nodes
         gen_ele = [g for g in generator if g.Bus == ele.Bus][0]
         gen_data = [gd for gd in extra_data['synch_gen'] if gd['bus'] == ele.Bus][0]
         gen_ele.IBR = False
-        gen_ele.inertia = gen_data['inertia']*2/(120*np.pi)
-        # a different way of estimating inertia
-        # gen_ele.inertia = gen_ele.Pmax/pmax_tot
+        gen_ele.inertia = gen_data['inertia']/(60*2*np.pi)
+        # an alternative method of estimating inertia
+        gen_ele.inertia_alt = gen_ele.Pmax/pmax_tot
         gen_ele.damping = gen_data['damping']
         gen_ele.droop_R = gen_data['droop_R']
         gen_ele.droop_T = gen_data['droop_T']
@@ -135,6 +134,9 @@ def parse_network(rawfile, jsonfile, constraint_mode, include_Pm_droop):
         ele.dPmin = ele.Pmin - ele.Pss
             
     # apply kron reduction to B matrix
+    # so that we get the direct relationship
+    # of power flows to gen bus angles 
+    # (can bypass calculating load bus angles)
     b0_ind = ibr_buses[0].bus_index
     b1_ind = pq_buses[0].bus_index
     Bgg = Bmat[:b0_ind, :b0_ind]
