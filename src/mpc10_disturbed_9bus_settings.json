@@ -1,0 +1,13 @@
+{
+    "tf": 10,
+    "h": 0.05,
+    "omega_weight": 1.0,
+    "rocof_weight": 0.1,
+    "dPibr_weight": 0.01,
+    "include_Pm_droop": false,
+    "N": 10,
+    "constraint_mode": 1,
+    "use_lqr": false,
+    "model_disturbance": true,
+    "save_file_name": "mpc10-9bus-disturbance"
+}

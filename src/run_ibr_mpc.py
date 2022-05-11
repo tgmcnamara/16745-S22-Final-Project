@@ -1,8 +1,11 @@
 import numpy as np
 import sys
+import json
+import os
 from parse_network import parse_network
 from build_QP_matrices import build_qp, update_qp, build_lqr
 from true_dynamics import DC_dynamics
+from build_observer import observer
 from matplotlib import pyplot as plt
 
 sys.path.append("..")
@@ -15,42 +18,53 @@ def get_disturbance(t, sim_data):
     return d
 
 def run_ibr_controller():
-    # define simulation parameters
-    tf = 20
-    h = 0.05
-    # penalize frequency deviation from 60 Hz
-    omega_weight = 10.0
-    # penalize rate of change of frequency deviation
-    rocof_weight = 0.01
-    # penalize use of IBRs (can leave at 0)
-    dPibr_weight = 0.001
-    
-    # model the synch gen's governor droop controller in state space model
-    include_Pm_droop = False
-
-    # time step horizon for MPC, if applicable
-    N = 10
-
-    # constraint mode:
-    # 0 - no constraints
-    # 1 - upper and lower bounds on dP for IBRs
-    # 2 - battery energy relation to dP for IBRs
-    constraint_mode = 1
-    # select whether to use a simple LQR controller 
-    use_lqr = False
-    
     # parse file and get initial state
     # 0 - 9 bus, 3 gen (1 IBR)
     # 1 - 38 bus, 10 gen (2 IBR)
     case = 0
-
     if case == 1:
         rawfile = 'ieee38_dc_sol.raw'
         jsonfile = 'ieee38_mpc_data.json'
     else:
         rawfile = 'case9_dc_sol.raw'
         jsonfile = 'case9_mpc_data.json'
+    # uncomment one of these depending on which experiment you want to run
+    # settings_file = 'lqr_9bus_settings.json'
+    # settings_file = 'mpc10_disturbed_9bus_settings.json'
+    settings_file = 'mpc20_disturbed_9bus_settings.json'
 
+    with open(settings_file, 'r') as f:
+        settings = json.load(f)
+    
+    # define simulation parameters
+    tf = settings['tf']
+    h = settings['h']
+    # penalize frequency deviation from 60 Hz
+    omega_weight = settings['omega_weight']
+    # penalize rate of change of frequency deviation
+    rocof_weight = settings['rocof_weight']
+    # penalize use of IBRs (can leave at 0)
+    dPibr_weight = settings['dPibr_weight']
+    
+    # model the synch gen's governor droop controller in state space model
+    # this hasn't been tested extensively and was not really discussed in the report
+    include_Pm_droop = settings['include_Pm_droop']
+
+    # time step horizon for MPC, if applicable
+    N = settings['N']
+
+    # constraint mode:
+    # 0 - no constraints
+    # 1 - upper and lower bounds on dP for IBRs
+    # 2 - battery energy relation to dP for IBRs 
+    #     doesn't really work yet :(
+    constraint_mode = settings['constraint_mode']
+    # select whether to use a simple LQR controller 
+    use_lqr = settings['use_lqr']
+    
+    model_disturbance = settings['model_disturbance']
+    plot_file_base = os.path.join('plots', settings['save_file_name'])
+    
     sim_data = parse_network(rawfile, jsonfile, constraint_mode, include_Pm_droop)
     n = sim_data['n']
     m = sim_data['m']
@@ -61,7 +75,6 @@ def run_ibr_controller():
     # if testing disturbance response, 
     # we assume we're at steady state before
     # so dtheta and domega are 0 initially
-    model_disturbance = True
     x0 = np.zeros(n)
     if constraint_mode ==2:
         Ebatt_inits = np.array([ele.Ebatt_init for ele in sim_data['ibr']])
@@ -73,8 +86,12 @@ def run_ibr_controller():
     if not model_disturbance:
         # some small initial freq deviations
         np.random.seed(2)
+        # one option...
         # deviations of ~ -1Hz with some added randomness
-        x0[ngen:2*ngen] = (-1 + 0.1*np.random.randn(ngen))*(2*np.pi) 
+        # x0[ngen:2*ngen] = (-1 + 0.1*np.random.randn(ngen))*(2*np.pi) 
+
+        x0[ngen] = (-0.5)*(2*np.pi) 
+        x0[ngen+1] = (.2)*(2*np.pi) 
 
     # set up controller
     if use_lqr:
@@ -138,25 +155,29 @@ def run_ibr_controller():
     # inspect and plot some results
     rad_to_hz = 1/(2*np.pi)
     plt.style.use('seaborn-darkgrid')
-    plt.figure(1)
+    plt.rcParams.update({'font.size': 16})
+    plt.rcParams.update({'font.weight': 'bold'})
+    fig, axs = plt.subplots(2,1)
+    fig.set_size_inches(7, 8)
     for i in range(ngen):
         freq_g = states_hist[sim_data['synch_gen'][i].domega_index,:]*rad_to_hz + 60
-        plt.plot(times, freq_g)
-    plt.xlabel('Simulation time (sec)')
-    plt.ylabel('Generator frequency (Hz)')
-    # plt.legend(["Gen 1", "Gen 2"])
-    plt.savefig('gen_freq_dev.svg', format='svg')
+        axs[0].plot(times, freq_g)
+    axs[0].set_xlabel('Simulation time (sec)')
+    axs[0].set_ylabel('Generator frequency (Hz)')
+    axs[0].legend(["Gen 1", "Gen 2"])
+    # fig_path = plot_file_base + '_gen_freq_dev.svg'
+    # plt.savefig(fig_path, format='svg')
 
     # calculate the dPs (up to N-1)
-    plt.figure(2)
     for i in range(nibr):
-        plt.plot(times[:-1], inputs_hist[i,:]) 
-    plt.xlabel('Simulation time (sec)')
-    plt.ylabel('IBR output delta P (p.u.)')
-    plt.savefig('ibr_deltaPs.svg', format='svg')
+        axs[1].plot(times[:-1], inputs_hist[i,:]) 
+    axs[1].set_xlabel('Simulation time (sec)')
+    axs[1].set_ylabel('IBR output delta P (p.u.)')
+    fig_path = plot_file_base + '-plots.png'
+    fig.savefig(fig_path, format='png')
     
     if constraint_mode == 2:
-        plt.figure(3)
+        plt.figure(2)
         for i in range(nibr):
             ibr_ele = sim_data['ibr'][i]
             Ebatt_i = states_hist[ibr_ele.Ebatt_index,:]/ibr_ele.Ebatt_max * 100
