@@ -20,6 +20,7 @@ def get_disturbance(t, sim_data):
 def run_ibr_controller():
     # parse file and get initial state
     # 0 - 9 bus, 3 gen (1 IBR)
+    # This one is very hard to get stable
     # 1 - 38 bus, 10 gen (2 IBR)
     case = 0
     if case == 1:
@@ -30,8 +31,12 @@ def run_ibr_controller():
         jsonfile = 'case9_mpc_data.json'
     # uncomment one of these depending on which experiment you want to run
     # settings_file = 'lqr_9bus_settings.json'
+    # settings_file = 'mpc10_9bus_settings.json'
+    settings_file = 'lqr_9bus_disturbed_settings.json'
     # settings_file = 'mpc10_disturbed_9bus_settings.json'
-    settings_file = 'mpc20_disturbed_9bus_settings.json'
+    # settings_file = 'mpc20_disturbed_9bus_settings.json'
+    # settings_file = 'lqr_38bus_settings.json'
+    # settings_file = 'mpc10_38bus_settings.json'
 
     with open(settings_file, 'r') as f:
         settings = json.load(f)
@@ -90,8 +95,8 @@ def run_ibr_controller():
         # deviations of ~ -1Hz with some added randomness
         # x0[ngen:2*ngen] = (-1 + 0.1*np.random.randn(ngen))*(2*np.pi) 
 
-        x0[ngen] = (-0.5)*(2*np.pi) 
-        x0[ngen+1] = (.2)*(2*np.pi) 
+        x0[ngen] = (-0.1)*(2*np.pi) 
+        x0[ngen+1] = (.1)*(2*np.pi) 
 
     # set up controller
     if use_lqr:
@@ -140,7 +145,7 @@ def run_ibr_controller():
                     print(resid)
         # apply saturation to u
         u_sat = np.minimum(dPmaxs, np.maximum(u, dPmins))
-        if np.amax(np.abs(u - u_sat)) > 1e-4:
+        if False:#np.amax(np.abs(u - u_sat)) > 1e-4:
             u = u_sat
             
         inputs_hist[:,t_ind] = u
